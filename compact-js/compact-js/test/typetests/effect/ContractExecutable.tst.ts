@@ -20,7 +20,8 @@ import {
   ZKConfiguration
 } from '@midnight-ntwrk/compact-js/effect';
 import * as Configuration from '@midnight-ntwrk/platform-js/effect/Configuration';
-import { Context,Effect, Layer } from 'effect';
+import type { PreTranscript } from '@midnightntwrk/ledger-v9';
+import { Context, Effect, Layer } from 'effect';
 import { describe, expect, it } from 'tstyche';
 
 import { Contract as Contract_ } from '../../contract/managed/counter/contract';
@@ -30,7 +31,7 @@ import { Contract as Contract_ } from '../../contract/managed/counter/contract';
 type MockCounterContract = Contract_<any>;
 const MockCounterContract = Contract_;
 
-class StringDep extends Context.Tag('StringDep')<StringDep, string>() {}
+class StringDep extends Context.Tag('StringDep')<StringDep, string>() { }
 
 describe('ContractExecutable', () => {
   const compiledContract = CompiledContract.make<MockCounterContract>('MockCounter', MockCounterContract).pipe(
@@ -57,10 +58,7 @@ describe('ContractExecutable', () => {
           ZKConfiguration.ZKConfiguration,
           Effect.sync(() => ({})) as Effect.Effect<ZKConfiguration.ZKConfiguration.Service>
         ),
-        Layer.effect(
-          Configuration.Keys,
-          Effect.sync(() => ({})) as Effect.Effect<Configuration.Configuration.Keys>
-        )
+        Layer.effect(Configuration.Keys, Effect.sync(() => ({})) as Effect.Effect<Configuration.Configuration.Keys>)
       );
       const executable = contractExecutable.pipe(ContractExecutable.provide(layer));
 
@@ -82,10 +80,7 @@ describe('ContractExecutable', () => {
           ZKConfiguration.ZKConfiguration,
           Effect.sync(() => ({})) as unknown as Effect.Effect<ZKConfiguration.ZKConfiguration.Service, never, StringDep>
         ),
-        Layer.effect(
-          Configuration.Keys,
-          Effect.sync(() => ({})) as Effect.Effect<Configuration.Configuration.Keys>
-        )
+        Layer.effect(Configuration.Keys, Effect.sync(() => ({})) as Effect.Effect<Configuration.Configuration.Keys>)
       );
       const executable = contractExecutable.pipe(ContractExecutable.provide(layer));
 

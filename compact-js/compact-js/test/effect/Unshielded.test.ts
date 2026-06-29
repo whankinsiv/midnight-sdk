@@ -18,7 +18,7 @@
 import { resolve } from 'node:path';
 
 import { NodeContext } from '@effect/platform-node';
-import { describe, expect,it } from '@effect/vitest';
+import { describe, expect, it } from '@effect/vitest';
 import {
   CompiledContract,
   Contract,
@@ -130,7 +130,7 @@ describe('Unshielded Tokens', () => {
     );
 
     const result = await runtime.runPromise(contract.initialize(undefined));
-    
+
     deployment = new ContractDeploy(asLedgerContractState(result.public.contractState));
     domainSep = Arbitrary.getSampleDomainSeparator();
   });

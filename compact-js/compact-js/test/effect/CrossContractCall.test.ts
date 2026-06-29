@@ -406,7 +406,7 @@ describe('cross-contract calls', () => {
     })
   );
 
-  it.effect('handles a self-call where a circuit calls another circuit on its own address', () =>
+  it.effect('rejects a self-call where a circuit calls another circuit on its own address (reentrancy guard)', () =>
     Effect.gen(function* () {
       const self = selfExecutable.pipe(ContractExecutable.provide(testLayer(CCC_SELF_ASSETS_PATH)));
       // The deploy address is not known until after construction, so deploy with a zero address...
@@ -430,11 +430,11 @@ describe('cross-contract calls', () => {
         { bytes: Buffer.from(selfAddress, 'hex') }
       );
       selfState.data = new ChargedState(setSelfResult.calls[0].public.contractState);
-      // Sanity check: `self` now points at this contract's own address.
-      expect(Buffer.from(cccSelfLedger(setSelfResult.calls[0].public.contractState).self.bytes).toString('hex')).toBe(selfAddress);
 
       const chain = new Map([[selfAddress, selfState]]);
-      const result = yield* self.circuit(
+      // callSelfGet attempts to call getV() on its own address, which is re-entrant. The runtime
+      // blocks this with a reentrancy guard, so the circuit must fail with a ContractRuntimeError.
+      const exit = yield* Effect.exit(self.circuit(
         Contract.ProvableCircuitId<CCCSelfContract>('callSelfGet'),
         {
           address: ContractAddress.ContractAddress(selfAddress),
@@ -443,16 +443,13 @@ describe('cross-contract calls', () => {
           parentBlockHash: ZERO_BLOCK_HASH,
           stateProvider: { getContractState: async (_blockHash, address) => chain.get(address) }
         }
-      );
+      ));
 
-      // callSelfGet calls getV() on its own address: one sub-call then the root.
-      expect(result.calls.map((call) => call.circuitId)).toEqual(['getV', 'callSelfGet']);
-      // The sub-call (callee) and the root execute against the same (self) address.
-      expect(result.calls[0].contractAddress).toBe(selfAddress);
-      expect(result.calls[1].contractAddress).toBe(selfAddress);
-      expect(Option.isSome(result.calls[0].communicationCommitment)).toBe(true);
-      expect(Option.isNone(result.calls[1].communicationCommitment)).toBe(true);
-      expect(result.result).toBe(4n);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = Cause.failureOption(Exit.isFailure(exit) ? exit.cause : Cause.empty);
+      expect(Option.isSome(error)).toBe(true);
+      expect(Option.getOrThrow(error)).toBeInstanceOf(ContractRuntimeError.ContractRuntimeError);
+      expect(String(Option.getOrThrow(error).cause)).toMatch(/re-entr/i);
     })
   );
 

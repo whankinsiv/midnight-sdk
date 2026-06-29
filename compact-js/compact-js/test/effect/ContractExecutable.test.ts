@@ -16,14 +16,18 @@
 import { resolve } from 'node:path';
 
 import { NodeContext } from '@effect/platform-node';
-import { beforeEach,describe, expect, it } from '@effect/vitest';
+import { beforeEach, describe, expect, it } from '@effect/vitest';
 import {
   CompiledContract,
   Contract,
-  ContractExecutable} from '@midnight-ntwrk/compact-js/effect';
+  ContractExecutable
+} from '@midnight-ntwrk/compact-js/effect';
 import * as ContractConfigurationError from '@midnight-ntwrk/compact-js/effect/ContractConfigurationError';
 import { ZKFileConfiguration } from '@midnight-ntwrk/compact-js-node/effect';
 import { ContractState, sampleSigningKey } from '@midnight-ntwrk/compact-runtime';
+import * as Configuration from '@midnight-ntwrk/platform-js/effect/Configuration';
+import * as ContractAddress from '@midnight-ntwrk/platform-js/effect/ContractAddress';
+import * as SigningKey from '@midnight-ntwrk/platform-js/effect/SigningKey';
 import {
   ContractDeploy,
   ContractState as LedgerContractState,
@@ -31,8 +35,6 @@ import {
   type VerifierKeyInsert,
   type VerifierKeyRemove
 } from '@midnightntwrk/ledger-v9';
-import * as Configuration from '@midnight-ntwrk/platform-js/effect/Configuration';
-import * as ContractAddress from '@midnight-ntwrk/platform-js/effect/ContractAddress';
 import { ConfigProvider, Effect, Layer, Option } from 'effect';
 
 import { CounterContract } from '../contract';
@@ -98,7 +100,7 @@ describe('ContractExecutable', () => {
         const result = yield* contract.initialize(initialPS);
 
         expect(result.public.contractState).toBeDefined();
-        expect(result.private.signingKey).toBe(VALID_SIGNING_KEY);
+        expect(result.private.signingKey).toEqual(SigningKey.make(VALID_SIGNING_KEY));
       })
     );
 
@@ -186,9 +188,9 @@ describe('ContractExecutable', () => {
         expect(result.public.maintenanceUpdate.counter).toEqual(deployment.initialState.maintenanceAuthority.counter);
         expect(
           (result.public.maintenanceUpdate.updates[0] as ReplaceAuthority).authority.counter
-            - deployment.initialState.maintenanceAuthority.counter
+          - deployment.initialState.maintenanceAuthority.counter
         ).toEqual(1n);
-        expect(result.private.signingKey).not.toEqual(VALID_SIGNING_KEY);
+        expect(result.private.signingKey).not.toEqual(SigningKey.make(VALID_SIGNING_KEY));
       })
     );
 
@@ -205,7 +207,7 @@ describe('ContractExecutable', () => {
         expect(result.public.maintenanceUpdate).toBeDefined();
         expect(result.public.maintenanceUpdate.counter).toEqual(deployment.initialState.maintenanceAuthority.counter);
         expect((result.public.maintenanceUpdate.updates[0] as VerifierKeyRemove).operation).toEqual('increment');
-        expect(result.private.signingKey).toEqual(VALID_SIGNING_KEY);
+        expect(result.private.signingKey).toEqual(SigningKey.make(VALID_SIGNING_KEY));
       })
     );
 
@@ -223,7 +225,7 @@ describe('ContractExecutable', () => {
         expect(result.public.maintenanceUpdate).toBeDefined();
         expect(result.public.maintenanceUpdate.counter).toEqual(deployment.initialState.maintenanceAuthority.counter);
         expect((result.public.maintenanceUpdate.updates[0] as VerifierKeyInsert).operation).toEqual('increment');
-        expect(result.private.signingKey).toEqual(VALID_SIGNING_KEY);
+        expect(result.private.signingKey).toEqual(SigningKey.make(VALID_SIGNING_KEY));
       })
     );
   });

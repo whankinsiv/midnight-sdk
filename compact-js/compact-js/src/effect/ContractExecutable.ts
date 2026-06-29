@@ -26,9 +26,9 @@ import {
   decodeZswapLocalState,
   emptyZswapLocalState,
   encodeZswapLocalState,
+  type LogEvent,
   type Op,
   type QueryContext,
-  sampleSigningKey,
   signatureVerifyingKey,
   type StateValue,
   type ZswapLocalState
@@ -44,8 +44,8 @@ import {
   PreTranscript,
   QueryContext as LedgerQueryContext,
   ReplaceAuthority,
+  sampleSigningKey,
   signData,
-  type SigningKey as LedgerSigningKey,
   type SingleUpdate,
   StateValue as LedgerStateValue,
   type Transcript,
@@ -63,6 +63,7 @@ import { type Pipeable, pipeArguments } from 'effect/Pipeable';
 import { type CompiledContract } from './CompiledContract.js';
 import * as Contract from './Contract.js';
 import * as ContractConfigurationError from './ContractConfigurationError.js';
+import { validateEvents } from './ContractEventValidator.js';
 import * as ContractRuntimeError from './ContractRuntimeError.js';
 import * as CompactContextInternal from './internal/compactContext.js';
 import { ZKConfiguration } from './ZKConfiguration.js';
@@ -71,8 +72,12 @@ import { type ZKConfigurationReadError } from './ZKConfigurationReadError.js';
 /**
  * An executable form of a Compact compiled contract.
  */
-export interface ContractExecutable<in out C extends Contract.Contract<PS>, PS, out E = never, out R = never>
-  extends Pipeable {
+export interface ContractExecutable<
+  in out C extends Contract.Contract<PS>,
+  PS,
+  out E = never,
+  out R = never
+> extends Pipeable {
   readonly compiledContract: CompiledContract<C, PS>;
 
   /**
@@ -105,7 +110,7 @@ export interface ContractExecutable<in out C extends Contract.Contract<PS>, PS, 
 
   /**
    * Retrieves the provable circuits available as part of the underlying contract.
-   * 
+   *
    * @returns An array of {@link Contract.ProvableCircuitId} describing the available provable circuits.
    */
   getProvableCircuitIds(): Contract.ProvableCircuitId<C>[];
@@ -190,6 +195,13 @@ export declare namespace ContractExecutable {
   export type PartitionedTranscript = [Transcript<AlignedValue> | undefined, Transcript<AlignedValue> | undefined];
   export type ContractCallPublic = {
     readonly contractState: StateValue;
+    /**
+     * Events emitted by the circuit during execution via the `emit` expression.
+     * Events are NOT consensus state and are handled by the indexer; size and well-formedness
+     * are enforced on-chain by the ledger/VM (degraded, not failed) per MIP-0002.
+     * @see ContractLog for event format details
+     */
+    readonly events: LogEvent[];
     readonly publicTranscript: Op<AlignedValue>[];
     readonly partitionedTranscript: PartitionedTranscript;
   };
@@ -235,14 +247,14 @@ export declare namespace ContractExecutable {
 
   export type MaintenanceResultPublic = {
     readonly maintenanceUpdate: MaintenanceUpdate;
-  }
+  };
   export type MaintenanceResultPrivate = {
     readonly signingKey: SigningKey.SigningKey;
-  }
+  };
   export type MaintenanceResult = {
     readonly public: MaintenanceResultPublic;
     readonly private: MaintenanceResultPrivate;
-  }
+  };
 }
 
 /**
@@ -262,15 +274,6 @@ type Transform<E, R> = <A>(effect: Effect.Effect<A, any, any>) => Effect.Effect<
 const DEFAULT_CMA_THRESHOLD = 1;
 const DEFAULT_SIGNATURE_INDEX = 0n;
 
-// Ledger v9 tags signing keys with their signature scheme ('schnorr' | 'ecdsa'), while
-// platform-js still models a signing key as a bare hex string. Untagged keys in earlier
-// ledger versions were Schnorr keys, so tagging with 'schnorr' preserves the previous
-// semantics. The onchain-runtime `SigningKey` is structurally identical, so this adapter
-// serves both `signData` (ledger) and `signatureVerifyingKey` (compact-runtime).
-const asTaggedSigningKey = (signingKey: SigningKey.SigningKey): LedgerSigningKey => ({
-  tag: 'schnorr',
-  value: signingKey
-});
 
 const asLedgerQueryContext = (queryContext: QueryContext): LedgerQueryContext => {
   const stateValue = LedgerStateValue.decode(queryContext.state.state.encode());
@@ -310,8 +313,8 @@ const partitionAllTranscripts = (
   return partitioned.length === trace.length
     ? Either.right(partitioned)
     : Either.left(
-        new Error(`Expected ${trace.length} transcript partition pairs, received: ${partitioned.length}`)
-      );
+      new Error(`Expected ${trace.length} transcript partition pairs, received: ${partitioned.length}`)
+    );
 };
 
 class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implements ContractExecutable<C, PS, E, R> {
@@ -370,6 +373,7 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
                     contractState
                   );
                 }
+
 
                 const operation = contractState.operation(provableCircuitId);
 
@@ -452,6 +456,7 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
               // Partition all calls' transcripts together (the partitioner needs the whole batch
               // to reconstruct the caller/callee graph).
               const partitioned = yield* partitionAllTranscripts(trace, circuitContext.ledgerParameters);
+              yield* validateEvents(context.events);
               const calls: ContractExecutable.ContractCall[] = trace.map((entry, i) => {
                 const partitionedTranscript = partitioned[i];
                 if (partitionedTranscript === undefined) {
@@ -464,6 +469,7 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
                   circuitId: entry.circuitId,
                   public: {
                     contractState: entry.finalQueryContext.state.state,
+                    events: context.events.filter((e) => e.address === entry.contractAddress),
                     publicTranscript: entry.publicTranscript,
                     partitionedTranscript
                   },
@@ -582,11 +588,11 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
     const { address, contractState } = contractContext;
     const currentSigningKey = keyConfig.getSigningKey();
     if (Option.isNone(currentSigningKey)) {
-      return Either.left(ContractConfigurationError.make(
-        'Signing key required to authorize contract maintenance update',
-        contractState
-      ));
+      return Either.left(
+        ContractConfigurationError.make('Signing key required to authorize contract maintenance update', contractState)
+      );
     }
+    const signingKey = currentSigningKey.value;
     const update = createUpdateFn();
     if (Either.isLeft(update)) return Either.left(update.left);
     const maintenanceUpdate = new MaintenanceUpdate(
@@ -598,7 +604,7 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
       public: {
         maintenanceUpdate: maintenanceUpdate.addSignature(
           DEFAULT_SIGNATURE_INDEX,
-          signData(asTaggedSigningKey(Option.getOrThrow(currentSigningKey)), maintenanceUpdate.dataToSign)
+          signData(Option.getOrThrow(currentSigningKey), maintenanceUpdate.dataToSign)
         )
       },
       private: {
@@ -610,26 +616,34 @@ class ContractExecutableImpl<C extends Contract.Contract<PS>, PS, E, R> implemen
   protected createMaintenanceAuthority(
     key: Option.Option<SigningKey.SigningKey>,
     contractState?: ContractState
-  ): Either.Either<[ContractMaintenanceAuthority, SigningKey.SigningKey], ContractConfigurationError.ContractConfigurationError> {
-    const signingKey = Option.match(key, {
+  ): Either.Either<
+    [ContractMaintenanceAuthority, SigningKey.SigningKey],
+    ContractConfigurationError.ContractConfigurationError
+  > {
+    // Sample a throwaway key only when none is configured, and derive the verifying key from the
+    // SAME key we hand back to the caller. Sampling twice would embed a verifying key that does not
+    // correspond to the returned signing key, so signatures made with it would never verify.
+    const platformSigningKey = Option.match(key, {
       onSome: identity,
-      onNone: () => SigningKey.SigningKey(sampleSigningKey('schnorr').value)
+      onNone: () => SigningKey.make(sampleSigningKey('schnorr').value)
     });
     try {
       return Either.right([
         new ContractMaintenanceAuthority(
-          [signatureVerifyingKey(asTaggedSigningKey(signingKey))],
+          [signatureVerifyingKey(platformSigningKey)],
           DEFAULT_CMA_THRESHOLD,
           contractState ? contractState.maintenanceAuthority.counter + 1n : 0n
         ),
-        signingKey
+        platformSigningKey
       ]);
     } catch (err: unknown) {
-      return Either.left(ContractConfigurationError.make(
-        `Failed to create a signature verifying key for signing key '${signingKey}'`,
-        contractState,
-        err
-      ));
+      return Either.left(
+        ContractConfigurationError.make(
+          `Failed to create a signature verifying key for signing key '${platformSigningKey}'`,
+          contractState,
+          err
+        )
+      );
     }
   }
 
